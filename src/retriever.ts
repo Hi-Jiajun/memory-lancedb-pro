@@ -365,7 +365,7 @@ export class MemoryRetriever {
     private store: MemoryStore,
     private embedder: Embedder,
     private config: RetrievalConfig = DEFAULT_RETRIEVAL_CONFIG,
-  ) {}
+  ) { }
 
   setAccessTracker(tracker: AccessTracker): void {
     this.accessTracker = tracker;
@@ -387,7 +387,7 @@ export class MemoryRetriever {
       limit: safeLimit,
       source: source || "unknown",
       mode:
-        this.config.mode === "vector" || !this.store.hasFtsSupport
+        this.config.mode === "vector" || !this.store.canUseFts
           ? this.config.mode === "vector"
             ? "vector"
             : "hybrid-fallback-vector"
@@ -400,7 +400,7 @@ export class MemoryRetriever {
     };
 
     let results: RetrievalResult[];
-    if (this.config.mode === "vector" || !this.store.hasFtsSupport) {
+    if (this.config.mode === "vector" || !this.store.canUseFts) {
       results = await this.vectorOnlyRetrieval(
         query,
         safeLimit,
@@ -572,11 +572,11 @@ export class MemoryRetriever {
     const reranked =
       this.config.rerank !== "none"
         ? await this.rerankResults(
-            query,
-            queryVector,
-            filtered.slice(0, limit * 2),
-            trace,
-          )
+          query,
+          queryVector,
+          filtered.slice(0, limit * 2),
+          trace,
+        )
         : filtered;
     if (this.config.rerank === "none") {
       this.pushTrace(trace, "rerank", filtered.length, filtered.length, 0, {
@@ -1185,6 +1185,8 @@ export class MemoryRetriever {
     success: boolean;
     mode: string;
     hasFtsSupport: boolean;
+    hasFtsIndex: boolean;
+    canUseFts: boolean;
     error?: string;
   }> {
     try {
@@ -1197,12 +1199,16 @@ export class MemoryRetriever {
         success: true,
         mode: this.config.mode,
         hasFtsSupport: this.store.hasFtsSupport,
+        hasFtsIndex: this.store.hasFtsIndex,
+        canUseFts: this.store.canUseFts,
       };
     } catch (error) {
       return {
         success: false,
         mode: this.config.mode,
         hasFtsSupport: this.store.hasFtsSupport,
+        hasFtsIndex: this.store.hasFtsIndex,
+        canUseFts: this.store.canUseFts,
         error: error instanceof Error ? error.message : String(error),
       };
     }
@@ -1244,10 +1250,15 @@ export class MemoryRetriever {
       const hasVector = Boolean(result.sources.vector);
       const hasBm25 = Boolean(result.sources.bm25);
       const hasRerank = Boolean(result.sources.reranked);
-      if (hasRerank) this.telemetry.sourceBreakdown.reranked += 1;
-      if (hasVector && hasBm25) this.telemetry.sourceBreakdown.hybrid += 1;
-      else if (hasVector) this.telemetry.sourceBreakdown.vectorOnly += 1;
-      else if (hasBm25) this.telemetry.sourceBreakdown.bm25Only += 1;
+      if (hasRerank) {
+        this.telemetry.sourceBreakdown.reranked += 1;
+      } else if (hasVector && hasBm25) {
+        this.telemetry.sourceBreakdown.hybrid += 1;
+      } else if (hasVector) {
+        this.telemetry.sourceBreakdown.vectorOnly += 1;
+      } else if (hasBm25) {
+        this.telemetry.sourceBreakdown.bm25Only += 1;
+      }
     }
   }
 }

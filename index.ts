@@ -1075,7 +1075,7 @@ async function findPreviousSessionFile(
       );
       if (nonReset.length > 0) return join(sessionsDir, nonReset[0]);
     }
-  } catch {}
+  } catch { }
 }
 
 // ============================================================================
@@ -1206,7 +1206,7 @@ const memoryLanceDBProPlugin = {
     } catch (err) {
       api.logger.warn(
         `memory-lancedb-pro: storage path issue — ${String(err)}\n` +
-          `  The plugin will still attempt to start, but writes may fail.`,
+        `  The plugin will still attempt to start, but writes may fail.`,
       );
     }
 
@@ -2225,7 +2225,7 @@ const memoryLanceDBProPlugin = {
         if (files.length > 7) {
           const { unlink } = await import("node:fs/promises");
           for (const old of files.slice(0, files.length - 7)) {
-            await unlink(join(backupDir, old)).catch(() => {});
+            await unlink(join(backupDir, old)).catch(() => { });
           }
         }
 
@@ -2283,10 +2283,10 @@ const memoryLanceDBProPlugin = {
 
             api.logger.info(
               `memory-lancedb-pro: initialized successfully ` +
-                `(embedding: ${embedTest.success ? "OK" : "FAIL"}, ` +
-                `retrieval: ${retrievalTest.success ? "OK" : "FAIL"}, ` +
-                `mode: ${retrievalTest.mode}, ` +
-                `FTS: ${retrievalTest.hasFtsSupport ? "enabled" : "disabled"})`,
+              `(embedding: ${embedTest.success ? "OK" : "FAIL"}, ` +
+              `retrieval: ${retrievalTest.success ? "OK" : "FAIL"}, ` +
+              `mode: ${retrievalTest.mode}, ` +
+              `FTS: support=${retrievalTest.hasFtsSupport ? "yes" : "no"}, index=${retrievalTest.hasFtsIndex ? "yes" : "no"})`,
             );
 
             if (!embedTest.success) {
@@ -2384,9 +2384,9 @@ export function parsePluginConfig(value: unknown): PluginConfig {
       ? sessionStrategyRaw
       : legacySessionMemoryEnabled === true
         ? "systemSessionMemory"
-      : legacySessionMemoryEnabled === false
+        : legacySessionMemoryEnabled === false
           ? "none"
-      : "systemSessionMemory";
+          : "systemSessionMemory";
   const reflectionMessageCount = parsePositiveInt(memoryReflectionRaw?.messageCount ?? sessionMemoryRaw?.messageCount) ?? DEFAULT_REFLECTION_MESSAGE_COUNT;
   const injectModeRaw = memoryReflectionRaw?.injectMode;
   const reflectionInjectMode: ReflectionInjectMode =
@@ -2487,26 +2487,26 @@ export function parsePluginConfig(value: unknown): PluginConfig {
     sessionMemory:
       typeof cfg.sessionMemory === "object" && cfg.sessionMemory !== null
         ? {
-            enabled:
-              (cfg.sessionMemory as Record<string, unknown>).enabled !== false,
-            messageCount:
-              typeof (cfg.sessionMemory as Record<string, unknown>)
-                .messageCount === "number"
-                ? ((cfg.sessionMemory as Record<string, unknown>)
-                    .messageCount as number)
-                : undefined,
-          }
+          enabled:
+            (cfg.sessionMemory as Record<string, unknown>).enabled !== false,
+          messageCount:
+            typeof (cfg.sessionMemory as Record<string, unknown>)
+              .messageCount === "number"
+              ? ((cfg.sessionMemory as Record<string, unknown>)
+                .messageCount as number)
+              : undefined,
+        }
         : undefined,
     mdMirror:
       typeof cfg.mdMirror === "object" && cfg.mdMirror !== null
         ? {
-            enabled:
-              (cfg.mdMirror as Record<string, unknown>).enabled === true,
-            dir:
-              typeof (cfg.mdMirror as Record<string, unknown>).dir === "string"
-                ? ((cfg.mdMirror as Record<string, unknown>).dir as string)
-                : undefined,
-          }
+          enabled:
+            (cfg.mdMirror as Record<string, unknown>).enabled === true,
+          dir:
+            typeof (cfg.mdMirror as Record<string, unknown>).dir === "string"
+              ? ((cfg.mdMirror as Record<string, unknown>).dir as string)
+              : undefined,
+        }
         : undefined,
   };
 }

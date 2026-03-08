@@ -241,6 +241,7 @@ export function registerMemoryCLI(program: Command, context: CLIContext): void {
           console.log(`• Available scopes: ${scopeStats.totalScopes}`);
           console.log(`• Retrieval mode: ${retrievalConfig.mode}`);
           console.log(`• FTS support: ${ftsStatus.supported ? 'Yes' : 'No'}`);
+          console.log(`• FTS index: ${ftsStatus.indexExists ? 'Yes' : 'No'}`);
           if (ftsStatus.lastError) {
             console.log(`• FTS last error: ${ftsStatus.lastError}`);
           }
@@ -279,7 +280,7 @@ export function registerMemoryCLI(program: Command, context: CLIContext): void {
     .action(async () => {
       try {
         const ftsStatusBefore = context.store.getFtsStatus();
-        console.log(`FTS status before: supported=${ftsStatusBefore.supported}, lastError=${ftsStatusBefore.lastError || 'none'}`);
+        console.log(`FTS status before: supported=${ftsStatusBefore.supported}, indexExists=${ftsStatusBefore.indexExists}, lastError=${ftsStatusBefore.lastError || 'none'}`);
         console.log("Rebuilding FTS index...");
 
         const result = await context.store.rebuildFtsIndex();
@@ -287,9 +288,10 @@ export function registerMemoryCLI(program: Command, context: CLIContext): void {
         if (result.success) {
           console.log("✔ FTS index rebuilt successfully.");
           const ftsStatusAfter = context.store.getFtsStatus();
-          console.log(`FTS status after: supported=${ftsStatusAfter.supported}`);
+          console.log(`FTS status after: supported=${ftsStatusAfter.supported}, indexExists=${ftsStatusAfter.indexExists}`);
         } else {
           console.error(`✘ FTS index rebuild failed: ${result.error}`);
+          process.exit(1);
         }
       } catch (error) {
         console.error("Reindex failed:", error);
@@ -516,6 +518,13 @@ export function registerMemoryCLI(program: Command, context: CLIContext): void {
 
         const targetScope = options.scope || context.scopeManager.getDefaultScope();
 
+        // Pre-load existing texts for exact-match dedupe (once, not per-entry)
+        const existing = await context.store.list([targetScope], undefined, 5000);
+        if (existing.length >= 5000) {
+          console.warn("Warning: existing memory count reached 5000 limit; text-based deduplication may miss entries beyond this limit.");
+        }
+        const existingTexts = new Set(existing.map(m => m.text.trim()));
+
         for (const memory of data.memories) {
           try {
             const text = memory.text;
@@ -527,10 +536,10 @@ export function registerMemoryCLI(program: Command, context: CLIContext): void {
             const categoryRaw = memory.category;
             const category: MemoryEntry["category"] =
               categoryRaw === "preference" ||
-              categoryRaw === "fact" ||
-              categoryRaw === "decision" ||
-              categoryRaw === "entity" ||
-              categoryRaw === "other"
+                categoryRaw === "fact" ||
+                categoryRaw === "decision" ||
+                categoryRaw === "entity" ||
+                categoryRaw === "other"
                 ? categoryRaw
                 : "other";
 
@@ -562,12 +571,8 @@ export function registerMemoryCLI(program: Command, context: CLIContext): void {
             // Back-compat dedupe: if no id provided, do a best-effort similarity check.
             // Uses store.vectorSearch() directly to avoid triggering rerank (which may 422).
             if (!id) {
-              // Cheap path: exact text match via store list scan
-              const existingByText = await context.store.list([targetScope], undefined, 1000);
-              const exactMatch = existingByText.find(
-                (m) => m.text.trim() === text.trim(),
-              );
-              if (exactMatch) {
+              // Cheap path: exact text match via pre-loaded text set
+              if (existingTexts.has(text.trim())) {
                 skipped++;
                 continue;
               }
@@ -616,6 +621,7 @@ export function registerMemoryCLI(program: Command, context: CLIContext): void {
               });
             }
 
+            existingTexts.add(text.trim());
             imported++;
           } catch (error) {
             console.warn(`Failed to import memory: ${error}`);
@@ -661,10 +667,10 @@ export function registerMemoryCLI(program: Command, context: CLIContext): void {
         let targetReal = context.store.dbPath;
         try {
           sourceReal = await fs.realpath(sourceDbPath);
-        } catch {}
+        } catch { }
         try {
           targetReal = await fs.realpath(context.store.dbPath);
-        } catch {}
+        } catch { }
 
         if (!force && sourceReal === targetReal) {
           console.error("Refusing to re-embed in-place: source-db equals target dbPath. Use a new dbPath or pass --force.");

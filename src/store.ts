@@ -96,8 +96,8 @@ export function validateStoragePath(dbPath: string): string {
       } catch (err: any) {
         throw new Error(
           `dbPath "${dbPath}" is a symlink whose target does not exist.\n` +
-            `  Fix: Create the target directory, or update the symlink to point to a valid path.\n` +
-            `  Details: ${err.code || ""} ${err.message}`,
+          `  Fix: Create the target directory, or update the symlink to point to a valid path.\n` +
+          `  Details: ${err.code || ""} ${err.message}`,
         );
       }
     }
@@ -122,9 +122,9 @@ export function validateStoragePath(dbPath: string): string {
     } catch (err: any) {
       throw new Error(
         `Failed to create dbPath directory "${resolvedPath}".\n` +
-          `  Fix: Ensure the parent directory "${dirname(resolvedPath)}" exists and is writable,\n` +
-          `       or create it manually: mkdir -p "${resolvedPath}"\n` +
-          `  Details: ${err.code || ""} ${err.message}`,
+        `  Fix: Ensure the parent directory "${dirname(resolvedPath)}" exists and is writable,\n` +
+        `       or create it manually: mkdir -p "${resolvedPath}"\n` +
+        `  Details: ${err.code || ""} ${err.message}`,
       );
     }
   }
@@ -135,9 +135,9 @@ export function validateStoragePath(dbPath: string): string {
   } catch (err: any) {
     throw new Error(
       `dbPath directory "${resolvedPath}" is not writable.\n` +
-        `  Fix: Check permissions with: ls -la "${dirname(resolvedPath)}"\n` +
-        `       Or grant write access: chmod u+w "${resolvedPath}"\n` +
-        `  Details: ${err.code || ""} ${err.message}`,
+      `  Fix: Check permissions with: ls -la "${dirname(resolvedPath)}"\n` +
+      `       Or grant write access: chmod u+w "${resolvedPath}"\n` +
+      `  Details: ${err.code || ""} ${err.message}`,
     );
   }
 
@@ -154,10 +154,11 @@ export class MemoryStore {
   private db: LanceDB.Connection | null = null;
   private table: LanceDB.Table | null = null;
   private initPromise: Promise<void> | null = null;
+  private ftsSupported = false;
   private ftsIndexCreated = false;
   private lastFtsError: string | null = null;
 
-  constructor(private readonly config: StoreConfig) {}
+  constructor(private readonly config: StoreConfig) { }
 
   get dbPath(): string {
     return this.config.dbPath;
@@ -189,7 +190,7 @@ export class MemoryStore {
       const message = err.message || String(err);
       throw new Error(
         `Failed to open LanceDB at "${this.config.dbPath}": ${code} ${message}\n` +
-          `  Fix: Verify the path exists and is writable. Check parent directory permissions.`,
+        `  Fix: Verify the path exists and is writable. Check parent directory permissions.`,
       );
     }
 
@@ -254,26 +255,39 @@ export class MemoryStore {
       }
     }
 
-    // Create FTS index for BM25 search (graceful fallback if unavailable)
+    // Detect FTS capability via runtime probe
     try {
-      await this.createFtsIndex(table);
-      this.ftsIndexCreated = true;
-      this.lastFtsError = null;
-    } catch (err) {
-      const errMsg = err instanceof Error ? err.message : String(err);
-      console.warn(
-        "Failed to create FTS index, falling back to vector-only search:",
-        errMsg,
-      );
+      const lancedb = await loadLanceDB();
+      this.ftsSupported = typeof (lancedb as any).Index?.fts === "function";
+    } catch {
+      this.ftsSupported = false;
+    }
+
+    // Create FTS index for BM25 search (graceful fallback if unavailable)
+    if (this.ftsSupported) {
+      try {
+        await this.createFtsIndex(table);
+        this.ftsIndexCreated = true;
+        this.lastFtsError = null;
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        console.warn(
+          "Failed to create FTS index, falling back to vector-only search:",
+          errMsg,
+        );
+        this.ftsIndexCreated = false;
+        this.lastFtsError = errMsg;
+      }
+    } else {
       this.ftsIndexCreated = false;
-      this.lastFtsError = errMsg;
+      this.lastFtsError = "LanceDB version does not support FTS";
     }
 
     this.db = db;
     this.table = table;
   }
 
-  private async createFtsIndex(table: LanceDB.Table): Promise<void> {
+  private async createFtsIndex(table: LanceDB.Table, force = false): Promise<void> {
     try {
       // Check if FTS index already exists
       const indices = await table.listIndices();
@@ -281,7 +295,7 @@ export class MemoryStore {
         (idx: any) => idx.indexType === "FTS" || idx.columns?.includes("text"),
       );
 
-      if (!hasFtsIndex) {
+      if (!hasFtsIndex || force) {
         // LanceDB @lancedb/lancedb >=0.26: use Index.fts() config
         const lancedb = await loadLanceDB();
         await table.createIndex("text", {
@@ -795,12 +809,20 @@ export class MemoryStore {
   }
 
   get hasFtsSupport(): boolean {
+    return this.ftsSupported;
+  }
+
+  get hasFtsIndex(): boolean {
     return this.ftsIndexCreated;
+  }
+
+  get canUseFts(): boolean {
+    return this.ftsSupported && this.ftsIndexCreated;
   }
 
   getFtsStatus(): { supported: boolean; indexExists: boolean; lastError: string | null } {
     return {
-      supported: this.ftsIndexCreated,
+      supported: this.ftsSupported,
       indexExists: this.ftsIndexCreated,
       lastError: this.lastFtsError,
     };
@@ -810,6 +832,9 @@ export class MemoryStore {
     await this.ensureInitialized();
     if (!this.table) {
       return { success: false, error: "Table not initialized" };
+    }
+    if (!this.ftsSupported) {
+      return { success: false, error: "FTS is not supported by the current LanceDB version" };
     }
 
     // Drop existing FTS index if present
@@ -821,13 +846,13 @@ export class MemoryStore {
       if (ftsIndex && ftsIndex.name) {
         await this.table.dropIndex(ftsIndex.name);
       }
-    } catch {
-      // Proceed even if drop fails
+    } catch (dropErr) {
+      console.warn("Failed to drop existing FTS index, attempting force-create:", dropErr);
     }
 
-    // Rebuild
+    // Rebuild (force=true to skip hasFtsIndex early-return)
     try {
-      await this.createFtsIndex(this.table);
+      await this.createFtsIndex(this.table, true);
       this.ftsIndexCreated = true;
       this.lastFtsError = null;
       return { success: true };

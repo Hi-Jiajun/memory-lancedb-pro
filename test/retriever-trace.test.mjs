@@ -26,6 +26,7 @@ describe("retriever trace and telemetry", () => {
   it("returns stage trace for vector retrieval and updates telemetry", async () => {
     const store = {
       hasFtsSupport: false,
+      canUseFts: false,
       async vectorSearch() {
         return [
           createEntry("m1", "user prefers vim", 0.91),
@@ -68,7 +69,7 @@ describe("retriever trace and telemetry", () => {
 
   it("tracks skipped requests separately from executed recalls", () => {
     const retriever = createRetriever(
-      { hasFtsSupport: false, async vectorSearch() { return []; } },
+      { hasFtsSupport: false, canUseFts: false, async vectorSearch() { return []; } },
       { async embedQuery() { return [0, 0, 0]; } },
       { mode: "vector" },
     );
@@ -81,5 +82,41 @@ describe("retriever trace and telemetry", () => {
     assert.equal(telemetry.skippedRequests, 2);
     assert.equal(telemetry.skippedBySource["auto-recall"], 2);
     assert.equal(telemetry.skipReasons.adaptive_skip, 2);
+  });
+
+  it("falls back to vector-only when supported=true but indexExists=false (canUseFts=false)", async () => {
+    let bm25Called = false;
+    const store = {
+      hasFtsSupport: true,   // library supports FTS
+      canUseFts: false,       // but index does not exist
+      async vectorSearch() {
+        return [
+          createEntry("m1", "some memory", 0.88),
+        ];
+      },
+      async bm25Search() {
+        bm25Called = true;
+        return [];
+      },
+    };
+    const embedder = {
+      async embedQuery() { return [1, 0, 0]; },
+    };
+
+    const retriever = createRetriever(store, embedder, {
+      mode: "hybrid",
+      filterNoise: false,
+      rerank: "none",
+    });
+
+    const execution = await retriever.retrieveWithTrace({
+      query: "test query",
+      limit: 5,
+    });
+
+    // Should fall back to vector-only, NOT call bm25Search
+    assert.equal(bm25Called, false, "bm25Search should not be called when canUseFts=false");
+    assert.equal(execution.trace.mode, "hybrid-fallback-vector");
+    assert.ok(execution.results.length >= 0);
   });
 });

@@ -37,6 +37,7 @@ describe("vector search cosine distance regression", () => {
     // cosine distance for related content ≈ 0.2–0.5, so score ≈ 0.67–0.83
     const store = {
       hasFtsSupport: false,
+      canUseFts: false,
       async vectorSearch() {
         return [
           createEntry("m1", "用户喜欢 Neovim", 0.77),
@@ -81,6 +82,7 @@ describe("vector search cosine distance regression", () => {
     // score = 1 / (1 + 2048) ≈ 0.000488 — everything gets filtered
     const store = {
       hasFtsSupport: false,
+      canUseFts: false,
       async vectorSearch() {
         return [
           createEntry("m1", "用户喜欢 Neovim", 0.0005),
@@ -128,6 +130,7 @@ describe("vector search cosine distance regression", () => {
     // opposite → distance=2.0, score=0.33
     const store = {
       hasFtsSupport: false,
+      canUseFts: false,
       async vectorSearch() {
         return [
           createEntry("exact", "identical meaning", 1.0),    // cosine dist=0
@@ -166,6 +169,7 @@ describe("vector search cosine distance regression", () => {
   it("trace correctly reports vector_search stage output count", async () => {
     const store = {
       hasFtsSupport: false,
+      canUseFts: false,
       async vectorSearch() {
         return [
           createEntry("m1", "memory one", 0.85),
