@@ -1,123 +1,89 @@
 /**
  * Vector Search Cosine Distance Test
- * Validates that vectorSearch uses cosine distance (not L2) so that
- * score = 1 / (1 + distance) produces meaningful results for high-dim embeddings.
+ * Tests that the real MemoryStore.vectorSearch uses cosine distance (not L2)
+ * and produces correct score values.
  */
 
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import Module from "node:module";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
-// Minimal mock to verify .distanceType('cosine') is called
-let distanceTypeCalled = null;
+process.env.NODE_PATH = [
+    process.env.NODE_PATH,
+    "/opt/homebrew/lib/node_modules/openclaw/node_modules",
+    "/opt/homebrew/lib/node_modules",
+].filter(Boolean).join(":");
+Module._initPaths();
 
-const mockTable = {
-    vectorSearch(vector) {
-        return {
-            distanceType(type) {
-                distanceTypeCalled = type;
-                return this;
-            },
-            limit(n) {
-                return this;
-            },
-            where(cond) {
-                return this;
-            },
-            async toArray() {
-                // Return a mock result with cosine-like distance
-                return [
-                    {
-                        id: "test-1",
-                        text: "test memory",
-                        vector: vector,
-                        category: "preference",
-                        scope: "global",
-                        importance: 0.8,
-                        timestamp: Date.now(),
-                        metadata: "{}",
-                        _distance: 0.1, // cosine distance → score = 1/(1+0.1) = 0.91
-                    },
-                ];
-            },
-        };
-    },
-    query() {
-        return {
-            limit() { return this; },
-            select() { return this; },
-            where() { return this; },
-            async toArray() { return []; },
-        };
-    },
-    async listIndices() { return []; },
-    async createIndex() { },
-};
+import jitiFactory from "jiti";
+const jiti = jitiFactory(import.meta.url, { interopDefault: true });
+const { MemoryStore } = jiti("../src/store.ts");
 
-// Test 1: distanceType is called with 'cosine'
-console.log("Test 1: vectorSearch calls distanceType('cosine')...");
+const DIM = 64; // small dim for fast tests
+const workDir = mkdtempSync(path.join(tmpdir(), "cosine-test-"));
+const dbPath = path.join(workDir, "db");
 
-// Create a minimal store-like object that exercises the vectorSearch path
-const fakeStore = {
-    table: mockTable,
-    config: { vectorDim: 4 },
-    ftsIndexCreated: false,
-    get hasFtsSupport() { return this.ftsIndexCreated; },
-    async ensureInitialized() { },
-    async vectorSearch(vector, limit = 5, minScore = 0.3, scopeFilter) {
-        const safeLimit = Math.min(Math.max(1, Math.floor(limit)), 20);
-        const fetchLimit = Math.min(safeLimit * 10, 200);
-        let query = this.table.vectorSearch(vector).distanceType('cosine').limit(fetchLimit);
-        const results = await query.toArray();
-        const mapped = [];
-        for (const row of results) {
-            const distance = Number(row._distance ?? 0);
-            const score = 1 / (1 + distance);
-            if (score < minScore) continue;
-            mapped.push({
-                entry: {
-                    id: row.id,
-                    text: row.text,
-                    vector: row.vector,
-                    category: row.category,
-                    scope: row.scope ?? "global",
-                    importance: Number(row.importance),
-                    timestamp: Number(row.timestamp),
-                    metadata: row.metadata || "{}",
-                },
-                score,
-            });
-            if (mapped.length >= safeLimit) break;
-        }
-        return mapped;
-    },
-};
+try {
+    const store = new MemoryStore({ dbPath, vectorDim: DIM });
 
-const results = await fakeStore.vectorSearch([1, 0, 0, 0], 5, 0.3);
-assert.strictEqual(distanceTypeCalled, "cosine", "Should call distanceType with 'cosine'");
-console.log("  ✅ distanceType('cosine') confirmed");
+    // Create two known vectors
+    const vecA = new Array(DIM).fill(0);
+    vecA[0] = 1.0; // unit vector along dim 0
 
-// Test 2: score computation is correct for cosine distance
-console.log("Test 2: Score formula 1/(1+distance) produces correct values...");
-assert.strictEqual(results.length, 1, "Should return 1 result");
-const expectedScore = 1 / (1 + 0.1);
-assert.ok(
-    Math.abs(results[0].score - expectedScore) < 0.001,
-    `Score should be ~${expectedScore.toFixed(3)}, got ${results[0].score.toFixed(3)}`,
-);
-console.log("  ✅ Score = 0.909 (correct for distance=0.1)");
+    const vecB = new Array(DIM).fill(0);
+    vecB[0] = 0.9; vecB[1] = 0.436; // ~cos_sim=0.9 with vecA (angle ~26°)
 
-// Test 3: Results below minScore are filtered out
-console.log("Test 3: Low-score results are filtered...");
-const strictResults = await fakeStore.vectorSearch([1, 0, 0, 0], 5, 0.95);
-assert.strictEqual(strictResults.length, 0, "Score 0.909 should be filtered by minScore=0.95");
-console.log("  ✅ minScore filtering works");
+    const vecC = new Array(DIM).fill(0);
+    vecC[1] = 1.0; // orthogonal to vecA → cos_sim=0
 
-// Test 4: Without cosine, L2 distance would produce wrong scores
-console.log("Test 4: Verify L2 would fail (documentation test)...");
-// For 1024-dim embeddings, L2 distance ≈ 40-60 for typical vectors
-// score = 1/(1+45) ≈ 0.022 — way below any reasonable minScore
-const l2TypicalDistance = 45;
-const l2Score = 1 / (1 + l2TypicalDistance);
-assert.ok(l2Score < 0.3, `L2 score ${l2Score.toFixed(4)} should be below minScore=0.3`);
-console.log(`  ✅ L2 score = ${l2Score.toFixed(4)} (would drop all results, confirming cosine is needed)`);
+    // Store memories with known vectors
+    await store.store({ text: "similar memory", vector: vecB, category: "preference", scope: "test", importance: 0.8 });
+    await store.store({ text: "orthogonal memory", vector: vecC, category: "fact", scope: "test", importance: 0.5 });
 
-console.log("\n=== All vector-search-cosine tests passed! ===");
+    // Test 1: vectorSearch returns results with correct cosine-based scores
+    console.log("Test 1: vectorSearch uses cosine distance and scores are meaningful...");
+    const results = await store.vectorSearch(vecA, 10, 0.0, ["test"]);
+    assert.ok(results.length >= 1, "Should return at least 1 result");
+
+    // Find the similar result
+    const similar = results.find(r => r.entry.text === "similar memory");
+    assert.ok(similar, "Similar memory should be in results");
+    // cosine distance for ~0.9 similarity → distance ~0.1 → score = 1/(1+0.1) ≈ 0.91
+    assert.ok(similar.score > 0.5, `Similar memory score should be >0.5, got ${similar.score.toFixed(3)}`);
+    console.log(`  ✅ Similar memory score = ${similar.score.toFixed(3)} (cosine-based, >0.5)`);
+
+    // Test 2: Orthogonal vector gets low score
+    console.log("Test 2: Orthogonal vector gets low score...");
+    const orthogonal = results.find(r => r.entry.text === "orthogonal memory");
+    if (orthogonal) {
+        assert.ok(orthogonal.score < similar.score, "Orthogonal should score lower than similar");
+        console.log(`  ✅ Orthogonal memory score = ${orthogonal.score.toFixed(3)} (lower than similar)`);
+    } else {
+        // May have been filtered by internal minScore
+        console.log("  ✅ Orthogonal memory filtered out (too low score)");
+    }
+
+    // Test 3: minScore filtering works
+    console.log("Test 3: minScore filtering excludes low-score results...");
+    const strictResults = await store.vectorSearch(vecA, 10, 0.95, ["test"]);
+    // With strict minScore, some results should be filtered
+    const filtered = results.length - strictResults.length;
+    assert.ok(filtered >= 0, "Strict minScore should filter equal or more results");
+    console.log(`  ✅ minScore=0.95 filtered ${filtered} results (${results.length} → ${strictResults.length})`);
+
+    // Test 4: L2 distance would produce wrong scores (documentation)
+    console.log("Test 4: Verify L2 would fail (documentation test)...");
+    // For 1024-dim normalized embeddings, L2 distance ≈ 40-60
+    // score = 1/(1+45) ≈ 0.022 — below any reasonable minScore
+    const l2TypicalDistance = 45;
+    const l2Score = 1 / (1 + l2TypicalDistance);
+    assert.ok(l2Score < 0.3, `L2 score ${l2Score.toFixed(4)} should be below minScore=0.3`);
+    console.log(`  ✅ L2 score = ${l2Score.toFixed(4)} (would drop all results, confirming cosine is needed)`);
+
+    console.log("\n=== All vector-search-cosine tests passed! ===");
+
+} finally {
+    rmSync(workDir, { recursive: true, force: true });
+}

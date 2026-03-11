@@ -978,8 +978,8 @@ export class MemoryStore {
         if (idx.indexType === "FTS" || idx.columns?.includes("text")) {
           try {
             await this.table!.dropIndex((idx as any).name || "text");
-          } catch {
-            // Ignore drop errors
+          } catch (err) {
+            console.warn(`memory-lancedb-pro: dropIndex(${(idx as any).name || "text"}) failed:`, err);
           }
         }
       }

@@ -254,7 +254,7 @@ export function getDecayableFromEntry(
 
 /** Predefined context vocabulary for support slices */
 export const SUPPORT_CONTEXT_VOCABULARY = [
-  "general", "morning", "evening", "night",
+  "general", "morning", "afternoon", "evening", "night",
   "weekday", "weekend", "work", "leisure",
   "summer", "winter", "travel",
 ] as const;
@@ -296,7 +296,7 @@ export function normalizeContext(raw: string | undefined): SupportContext {
   // Common Chinese/English mappings
   const aliases: Record<string, SupportContext> = {
     "早上": "morning", "上午": "morning", "早晨": "morning",
-    "下午": "evening", "傍晚": "evening", "晚上": "evening",
+    "下午": "afternoon", "傍晚": "evening", "晚上": "evening",
     "深夜": "night", "夜晚": "night", "凌晨": "night",
     "工作日": "weekday", "平时": "weekday",
     "周末": "weekend", "假日": "weekend", "休息日": "weekend",
@@ -328,9 +328,15 @@ export function parseSupportInfo(raw: unknown): SupportInfoV2 {
     return {
       global_strength: typeof obj.global_strength === "number" ? obj.global_strength : 0.5,
       total_observations: typeof obj.total_observations === "number" ? obj.total_observations : 0,
-      slices: (obj.slices as ContextualSupport[]).filter(
+      slices: (obj.slices as Record<string, unknown>[]).filter(
         s => s && typeof s.context === "string",
-      ),
+      ).map(s => ({
+        context: String(s.context),
+        confirmations: typeof s.confirmations === "number" && s.confirmations >= 0 ? s.confirmations : 0,
+        contradictions: typeof s.contradictions === "number" && s.contradictions >= 0 ? s.contradictions : 0,
+        strength: typeof s.strength === "number" && s.strength >= 0 && s.strength <= 1 ? s.strength : 0.5,
+        last_observed_at: typeof s.last_observed_at === "number" ? s.last_observed_at : Date.now(),
+      })),
     };
   }
 
@@ -379,7 +385,10 @@ export function updateSupportStats(
   slice.strength = sliceTotal > 0 ? slice.confirmations / sliceTotal : 0.5;
   slice.last_observed_at = Date.now();
 
-  // Cap slices (keep most recently observed, but preserve dropped evidence)
+  // Cap slices (keep most recently observed, but preserve dropped evidence).
+  // NOTE: Evidence from slices dropped in *previous* updates is already baked
+  // into total_observations/global_strength, so those values may drift slightly
+  // over many truncation cycles. This is an accepted trade-off for bounded JSON size.
   let slices = base.slices;
   let droppedConf = 0, droppedContra = 0;
   if (slices.length > MAX_SUPPORT_SLICES) {
