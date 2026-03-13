@@ -21,6 +21,11 @@ type EntryLike = {
   metadata?: string;
 };
 
+export interface MemoryRelation {
+  type: string;
+  targetId: string;
+}
+
 export interface SmartMemoryMetadata {
   l0_abstract: string;
   l1_overview: string;
@@ -35,6 +40,7 @@ export interface SmartMemoryMetadata {
   fact_key?: string;
   supersedes?: string;
   superseded_by?: string;
+  relations?: MemoryRelation[];
   source_session?: string;
   [key: string]: unknown;
 }

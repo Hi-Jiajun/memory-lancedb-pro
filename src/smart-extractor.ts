@@ -32,6 +32,7 @@ import {
   buildSmartMetadata,
   deriveFactKey,
   isMemoryActiveAt,
+  type MemoryRelation,
   parseSmartMetadata,
   stringifySmartMetadata,
   parseSupportInfo,
@@ -57,11 +58,11 @@ const VALID_DECISIONS = new Set<string>([
 
 function appendRelation(
   existing: unknown,
-  relation: { type: string; targetId: string },
-): Array<{ type: string; targetId: string }> {
+  relation: MemoryRelation,
+): MemoryRelation[] {
   const rows = Array.isArray(existing)
     ? existing.filter(
-      (item): item is { type: string; targetId: string } =>
+      (item): item is MemoryRelation =>
         !!item &&
         typeof item === "object" &&
         typeof (item as { type?: unknown }).type === "string" &&
